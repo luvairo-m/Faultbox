@@ -40,3 +40,6 @@ Desktop.ini
 # Local planning documents
 /FAULTBOX_CONTEXT.txt
 /FAULTBOX_PLAN.txt
+
+# Local agent instructions
+/AGENTS.md
