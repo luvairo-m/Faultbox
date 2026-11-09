@@ -215,7 +215,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-До появления тестов pytest завершает работу с кодом 5.
+Первый тест проверяет, что установленная команда `faultbox --help` успешно показывает справку. GitHub Actions запускает pytest и mypy на Python 3.11 при открытии и обновлении pull request.
 
 На Linux и macOS используйте `python3` для создания окружения, а затем `.venv/bin/python` и `.venv/bin/faultbox` для запуска инструментов.
 
