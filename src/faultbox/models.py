@@ -4,6 +4,10 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 
+DEFAULT_DELAY_MS = 0
+DEFAULT_REPEAT = 1
+
+
 @dataclass
 class RouteMatch:
     headers: dict[str, str] = field(default_factory=dict)
@@ -16,8 +20,8 @@ class ResponseStep:
     headers: dict[str, str] = field(default_factory=dict)
     body: str | None = None
     body_file: str | None = None
-    delay_ms: int = 0
-    repeat: int = 1
+    delay_ms: int = DEFAULT_DELAY_MS
+    repeat: int = DEFAULT_REPEAT
 
     def __post_init__(self) -> None:
         if self.body is not None and self.body_file is not None:
@@ -34,3 +38,8 @@ class Route:
     path: str
     steps: list[ResponseStep]
     match: RouteMatch = field(default_factory=RouteMatch)
+
+
+@dataclass
+class Scenario:
+    routes: list[Route]
