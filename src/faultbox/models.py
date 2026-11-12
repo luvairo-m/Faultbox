@@ -7,6 +7,9 @@ from typing import Literal
 DEFAULT_DELAY_MS = 0
 DEFAULT_REPEAT = 1
 
+HttpMethod = Literal["GET", "POST"]
+SUPPORTED_METHODS: tuple[HttpMethod, ...] = ("GET", "POST")
+
 
 @dataclass
 class RouteMatch:
@@ -34,7 +37,7 @@ class ResponseStep:
 @dataclass
 class Route:
     id: str
-    method: Literal["GET", "POST"]
+    method: HttpMethod
     path: str
     steps: list[ResponseStep]
     match: RouteMatch = field(default_factory=RouteMatch)

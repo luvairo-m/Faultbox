@@ -116,6 +116,25 @@ def test_load_reports_invalid_path(tmp_path: Path) -> None:
         load_scenario(tmp_path / "bad\0name.toml")
 
 
+def test_load_reports_unsupported_method(tmp_path: Path) -> None:
+    scenario = tmp_path / "scenario.toml"
+    scenario.write_text(
+        """
+[[routes]]
+id = "payments"
+method = "PUT"
+path = "/payments"
+
+[[routes.steps]]
+status = 200
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ScenarioError, match=r"routes\[1\]\.method: expected GET or POST"):
+        load_scenario(scenario)
+
+
 @pytest.mark.parametrize(
     ("steps", "message"),
     [

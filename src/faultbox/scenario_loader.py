@@ -2,12 +2,13 @@
 
 import tomllib
 from pathlib import Path
-from typing import Literal
 
 from faultbox.errors import ScenarioError
 from faultbox.models import (
     DEFAULT_DELAY_MS,
     DEFAULT_REPEAT,
+    SUPPORTED_METHODS,
+    HttpMethod,
     ResponseStep,
     Route,
     RouteMatch,
@@ -105,11 +106,11 @@ def _parse_step(value: object, field: str) -> ResponseStep:
         raise ValueError(f"{field}: {error}") from error
 
 
-def _method(value: object, field: str) -> Literal["GET", "POST"]:
-    if value == "GET":
-        return "GET"
+def _method(value: object, field: str) -> HttpMethod:
+    for method in SUPPORTED_METHODS:
+        if value == method:
+            return method
 
-    if value == "POST":
-        return "POST"
+    allowed_methods = " or ".join(SUPPORTED_METHODS)
 
-    raise ValueError(f"{field}: expected GET or POST")
+    raise ValueError(f"{field}: expected {allowed_methods}")
