@@ -1,4 +1,6 @@
-"""Read a TOML scenario into the configuration models."""
+"""Read and validate a TOML scenario before it is used by the server."""
+
+from __future__ import annotations
 
 import tomllib
 from pathlib import Path
@@ -14,9 +16,11 @@ from faultbox.models import (
     RouteMatch,
     Scenario,
 )
-from faultbox.toml_fields import (
+from faultbox.validation.scenario_validation import validate_scenario
+from faultbox.validation.toml_validation import (
     expect_array,
     expect_integer,
+    expect_only_known_fields,
     expect_optional_string,
     expect_string,
     expect_string_table,
@@ -25,20 +29,17 @@ from faultbox.toml_fields import (
 
 
 def load_scenario(path: str | Path) -> Scenario:
-    """Read a scenario and check the structure needed by the models."""
+    """Read a scenario and validate its fields, routes and response steps."""
     scenario_path = Path(path)
     document = _read_toml(scenario_path)
 
     try:
-        raw_routes = expect_array(document.get("routes"), "routes")
-        routes = [
-            _parse_route(route, f"routes[{number}]")
-            for number, route in enumerate(raw_routes, start=1)
-        ]
+        scenario = _parse_scenario(document)
+        validate_scenario(scenario)
     except ValueError as error:
         raise ScenarioError(f"{scenario_path}: {error}") from error
 
-    return Scenario(routes=routes)
+    return scenario
 
 
 def _read_toml(path: Path) -> dict[str, object]:
@@ -60,38 +61,60 @@ def _read_toml(path: Path) -> dict[str, object]:
         raise ScenarioError(f"{path}: invalid TOML: {error}") from error
 
 
+def _parse_scenario(document: dict[str, object]) -> Scenario:
+    expect_only_known_fields(document, {"routes"})
+    raw_routes = expect_array(document.get("routes"), "routes")
+
+    routes = [
+        _parse_route(raw_route, f"routes[{route_number}]")
+        for route_number, raw_route in enumerate(raw_routes, start=1)
+    ]
+
+    return Scenario(routes=routes)
+
+
 def _parse_route(value: object, field: str) -> Route:
-    route = expect_table(value, field)
+    route_table = expect_table(value, field)
+    expect_only_known_fields(route_table, {"id", "method", "path", "steps", "match"}, field)
+
+    route_id = expect_string(route_table.get("id"), f"{field}.id")
+    method = _parse_method(route_table.get("method"), f"{field}.method")
+    path = expect_string(route_table.get("path"), f"{field}.path")
 
     steps_field = f"{field}.steps"
-    steps = expect_array(route.get("steps"), steps_field)
+    raw_steps = expect_array(route_table.get("steps"), steps_field)
 
-    match_field = f"{field}.match"
-    match = expect_table(route.get("match", {}), match_field)
+    steps = [
+        _parse_step(raw_step, f"{steps_field}[{step_number}]")
+        for step_number, raw_step in enumerate(raw_steps, start=1)
+    ]
 
-    return Route(
-        id=expect_string(route.get("id"), f"{field}.id"),
-        method=_method(route.get("method"), f"{field}.method"),
-        path=expect_string(route.get("path"), f"{field}.path"),
-        steps=[
-            _parse_step(step, f"{steps_field}[{number}]")
-            for number, step in enumerate(steps, start=1)
-        ],
-        match=RouteMatch(
-            headers=expect_string_table(match.get("headers", {}), f"{match_field}.headers"),
-            query=expect_string_table(match.get("query", {}), f"{match_field}.query"),
-        ),
-    )
+    match = _parse_match(route_table.get("match", {}), f"{field}.match")
+
+    return Route(id=route_id, method=method, path=path, steps=steps, match=match)
+
+
+def _parse_match(value: object, field: str) -> RouteMatch:
+    match_table = expect_table(value, field)
+    expect_only_known_fields(match_table, {"headers", "query"}, field)
+
+    headers = expect_string_table(match_table.get("headers", {}), f"{field}.headers")
+    query = expect_string_table(match_table.get("query", {}), f"{field}.query")
+
+    return RouteMatch(headers=headers, query=query)
 
 
 def _parse_step(value: object, field: str) -> ResponseStep:
-    step = expect_table(value, field)
-    status = expect_integer(step.get("status"), f"{field}.status")
-    headers = expect_string_table(step.get("headers", {}), f"{field}.headers")
-    body = expect_optional_string(step.get("body"), f"{field}.body")
-    body_file = expect_optional_string(step.get("body_file"), f"{field}.body_file")
-    delay_ms = expect_integer(step.get("delay_ms", DEFAULT_DELAY_MS), f"{field}.delay_ms")
-    repeat = expect_integer(step.get("repeat", DEFAULT_REPEAT), f"{field}.repeat")
+    step_table = expect_table(value, field)
+    allowed_fields = {"status", "headers", "body", "body_file", "delay_ms", "repeat"}
+    expect_only_known_fields(step_table, allowed_fields, field)
+
+    status = expect_integer(step_table.get("status"), f"{field}.status")
+    delay_ms = expect_integer(step_table.get("delay_ms", DEFAULT_DELAY_MS), f"{field}.delay_ms")
+    repeat = expect_integer(step_table.get("repeat", DEFAULT_REPEAT), f"{field}.repeat")
+    headers = expect_string_table(step_table.get("headers", {}), f"{field}.headers")
+    body = expect_optional_string(step_table.get("body"), f"{field}.body")
+    body_file = expect_optional_string(step_table.get("body_file"), f"{field}.body_file")
 
     try:
         return ResponseStep(
@@ -106,7 +129,7 @@ def _parse_step(value: object, field: str) -> ResponseStep:
         raise ValueError(f"{field}: {error}") from error
 
 
-def _method(value: object, field: str) -> HttpMethod:
+def _parse_method(value: object, field: str) -> HttpMethod:
     for method in SUPPORTED_METHODS:
         if value == method:
             return method
