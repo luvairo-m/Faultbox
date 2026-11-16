@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import pytest
@@ -129,8 +130,13 @@ def test_load_snapshots_utf8_body_file_relative_to_scenario(
     ("filename", "message"),
     [
         ("missing.txt", "cannot read 'missing.txt'"),
-        ("responses", "cannot read 'responses'"),
+        ("responses", "cannot read 'responses': expected a regular file"),
         ("invalid.txt", "'invalid.txt' must be UTF-8"),
+        pytest.param(
+            "NUL",
+            "cannot read 'NUL'",
+            marks=pytest.mark.skipif(sys.platform != "win32", reason="Windows device name"),
+        ),
     ],
 )
 def test_load_reports_body_file_errors(tmp_path: Path, filename: str, message: str) -> None:

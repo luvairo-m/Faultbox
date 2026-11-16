@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 import tomllib
 from pathlib import Path
 
@@ -62,9 +63,15 @@ def _read_response_body(scenario_directory: Path, filename: str, field: str) -> 
     if path.anchor:
         raise ValueError(f"{field}: expected a path relative to the scenario: {filename!r}")
 
-    # Decode bytes directly to preserve the file's original line endings.
+    response_path = scenario_directory / path
+
     try:
-        return (scenario_directory / path).read_bytes().decode("utf-8")
+        # Opening a device or a named pipe could block scenario loading.
+        if not stat.S_ISREG(response_path.stat().st_mode):
+            raise ValueError("expected a regular file")
+
+        # Decode bytes directly to preserve the file's original line endings.
+        return response_path.read_bytes().decode("utf-8")
     except UnicodeDecodeError as error:
         raise ValueError(f"{field}: {filename!r} must be UTF-8") from error
     except OSError as error:
