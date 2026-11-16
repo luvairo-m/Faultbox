@@ -83,7 +83,6 @@ path = "/payments"
 
 [[routes.steps]]
 status = 200
-body_file = "responses/not-created.json"
 """,
         encoding="utf-8",
     )
@@ -102,8 +101,54 @@ body_file = "responses/not-created.json"
             delay_ms=100,
         )
     ]
-    assert routes[1].steps[0].body_file == "responses/not-created.json"
-    assert routes[1].steps[0].body is None
+
+
+def test_load_snapshots_utf8_body_file_relative_to_scenario(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_directory = tmp_path / "config"
+    responses_directory = config_directory / "responses"
+    responses_directory.mkdir(parents=True)
+    response_path = responses_directory / "response.json"
+    original_body = '{"сообщение":\r\n'
+    response_path.write_bytes(original_body.encode("utf-8"))
+    _write_scenario_file(
+        config_directory, _ROUTE_TOML + _STEP_TOML + 'body_file = "responses/response.json"\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    scenario_path = Path("config") / "scenario.toml"
+
+    step = load_scenario(scenario_path).routes[0].steps[0]
+    response_path.write_bytes(b"updated response")
+
+    assert (step.body, step.body_file) == (original_body, None)
+    assert load_scenario(scenario_path).routes[0].steps[0].body == "updated response"
+
+
+@pytest.mark.parametrize(
+    ("filename", "message"),
+    [
+        ("missing.txt", "cannot read 'missing.txt'"),
+        ("responses", "cannot read 'responses'"),
+        ("invalid.txt", "'invalid.txt' must be UTF-8"),
+    ],
+)
+def test_load_reports_body_file_errors(tmp_path: Path, filename: str, message: str) -> None:
+    (tmp_path / "responses").mkdir()
+    (tmp_path / "invalid.txt").write_bytes(b"\xff")
+    document = _ROUTE_TOML + _STEP_TOML + f'body_file = "{filename}"\n'
+
+    _assert_invalid_scenario(tmp_path, document, f"routes[1].steps[1].body_file: {message}")
+
+
+def test_load_rejects_an_absolute_body_file_path(tmp_path: Path) -> None:
+    response_path = tmp_path / "response.txt"
+    response_path.write_bytes(b"text")
+    document = _ROUTE_TOML + _STEP_TOML + f'body_file = "{response_path.as_posix()}"\n'
+
+    _assert_invalid_scenario(
+        tmp_path, document, "routes[1].steps[1].body_file: expected a path relative to the scenario"
+    )
 
 
 def test_load_reports_invalid_toml(tmp_path: Path) -> None:
@@ -383,33 +428,38 @@ def test_load_rejects_header_line_breaks(
 
 
 @pytest.mark.parametrize("status", [204, 205, 304])
-def test_load_rejects_nonempty_body_for_bodyless_status(tmp_path: Path, status: int) -> None:
-    document = _ROUTE_TOML + f'[[routes.steps]]\nstatus = {status}\nbody = " "\n'
+@pytest.mark.parametrize("field", ["body", "body_file"])
+def test_load_rejects_nonempty_body_for_bodyless_status(
+    tmp_path: Path, status: int, field: str
+) -> None:
+    value = " "
+    if field == "body_file":
+        value = "response.txt"
+        (tmp_path / value).write_bytes(b" ")
+
+    document = _ROUTE_TOML + f'[[routes.steps]]\nstatus = {status}\n{field} = "{value}"\n'
 
     _assert_invalid_scenario(
-        tmp_path, document, f"routes[1].steps[1].body: status {status} requires an empty body"
+        tmp_path, document, f"routes[1].steps[1].{field}: status {status} requires an empty body"
     )
 
 
 @pytest.mark.parametrize(
-    ("status", "body_field_toml", "expected_body", "expected_body_file"),
+    ("status", "body_field_toml", "expected_body"),
     [
-        (204, "", "", None),
-        (205, 'body = ""', "", None),
-        (304, 'body_file = "not-created.txt"', None, "not-created.txt"),
-        (599, 'body = "text"', "text", None),
+        (204, "", ""),
+        (205, 'body = ""', ""),
+        (304, 'body_file = "empty.txt"', ""),
+        (599, 'body = "text"', "text"),
     ],
 )
 def test_load_accepts_valid_status_and_body(
-    tmp_path: Path,
-    status: int,
-    body_field_toml: str,
-    expected_body: str | None,
-    expected_body_file: str | None,
+    tmp_path: Path, status: int, body_field_toml: str, expected_body: str
 ) -> None:
+    (tmp_path / "empty.txt").write_bytes(b"")
     document = _ROUTE_TOML + f"[[routes.steps]]\nstatus = {status}\n{body_field_toml}\n"
     scenario_path = _write_scenario_file(tmp_path, document)
 
     (step,) = load_scenario(scenario_path).routes[0].steps
 
-    assert (step.status, step.body, step.body_file) == (status, expected_body, expected_body_file)
+    assert (step.status, step.body, step.body_file) == (status, expected_body, None)

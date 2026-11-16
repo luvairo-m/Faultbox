@@ -16,7 +16,7 @@ from faultbox.models import (
     RouteMatch,
     Scenario,
 )
-from faultbox.validation.scenario_validation import validate_scenario
+from faultbox.validation.scenario_validation import validate_response_body, validate_scenario
 from faultbox.validation.toml_validation import (
     expect_array,
     expect_integer,
@@ -29,17 +29,48 @@ from faultbox.validation.toml_validation import (
 
 
 def load_scenario(path: str | Path) -> Scenario:
-    """Read a scenario and validate its fields, routes and response steps."""
+    """Read and validate a scenario, including its response body files."""
     scenario_path = Path(path)
     document = _read_toml(scenario_path)
 
     try:
         scenario = _parse_scenario(document)
         validate_scenario(scenario)
+        _load_response_bodies(scenario, scenario_path.parent)
     except ValueError as error:
         raise ScenarioError(f"{scenario_path}: {error}") from error
 
     return scenario
+
+
+def _load_response_bodies(scenario: Scenario, scenario_directory: Path) -> None:
+    for route_number, route in enumerate(scenario.routes, start=1):
+        for step_number, step in enumerate(route.steps, start=1):
+            if step.body_file is None:
+                continue
+
+            field = f"routes[{route_number}].steps[{step_number}].body_file"
+            body = _read_response_body(scenario_directory, step.body_file, field)
+            validate_response_body(step.status, body, field)
+
+            step.body_file = None
+            step.body = body
+
+
+def _read_response_body(scenario_directory: Path, filename: str, field: str) -> str:
+    path = Path(filename)
+    if path.anchor:
+        raise ValueError(f"{field}: expected a path relative to the scenario: {filename!r}")
+
+    # Decode bytes directly to preserve the file's original line endings.
+    try:
+        return (scenario_directory / path).read_bytes().decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{field}: {filename!r} must be UTF-8") from error
+    except OSError as error:
+        raise ValueError(f"{field}: cannot read {filename!r}: {error.strerror}") from error
+    except ValueError as error:
+        raise ValueError(f"{field}: cannot read {filename!r}: {error}") from error
 
 
 def _read_toml(path: Path) -> dict[str, object]:
