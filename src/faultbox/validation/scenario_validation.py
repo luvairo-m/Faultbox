@@ -81,6 +81,7 @@ def _validate_match_headers(headers: dict[str, str], field: str) -> None:
         _validate_header(name, value, header_field)
 
         normalized_name = name.lower()
+
         if normalized_name == "x-test-case-id":
             raise ValueError(f"{header_field}: header is reserved for test isolation")
 
@@ -130,7 +131,9 @@ def _validate_step(step: ResponseStep, field: str) -> None:
         raise ValueError(f"{field}.repeat: expected an integer greater than or equal to 1")
 
     _validate_response_headers(step.headers, f"{field}.headers")
-    validate_response_body(step.status, step.body, f"{field}.body")
+
+    body_field = "body_file" if step.body_file is not None else "body"
+    validate_response_body(step.status, step.body, f"{field}.{body_field}")
 
 
 def validate_response_body(status: int, body: str | None, field: str) -> None:

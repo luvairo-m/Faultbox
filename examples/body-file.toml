@@ -1,0 +1,9 @@
+[[routes]]
+id = "payments"
+method = "POST"
+path = "/payments"
+
+[[routes.steps]]
+status = 200
+body_file = "responses/payment.json"
+headers = { "Content-Type" = "application/json; charset=utf-8" }
