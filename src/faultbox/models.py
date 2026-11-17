@@ -27,9 +27,6 @@ class ResponseStep:
     repeat: int = DEFAULT_REPEAT
 
     def __post_init__(self) -> None:
-        if self.body is not None and self.body_file is not None:
-            raise ValueError("body and body_file cannot be set together")
-
         if self.body is None and self.body_file is None:
             self.body = ""
 

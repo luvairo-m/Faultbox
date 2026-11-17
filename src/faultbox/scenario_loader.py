@@ -17,7 +17,7 @@ from faultbox.models import (
     RouteMatch,
     Scenario,
 )
-from faultbox.validation.scenario_validation import validate_response_body, validate_scenario
+from faultbox.validation.scenario_validation import validate_scenario
 from faultbox.validation.toml_validation import (
     expect_array,
     expect_integer,
@@ -32,52 +32,33 @@ from faultbox.validation.toml_validation import (
 def load_scenario(path: str | Path) -> Scenario:
     """Read and validate a scenario, including its response body files."""
     scenario_path = Path(path)
-    document = _read_toml(scenario_path)
 
     try:
-        scenario = _parse_scenario(document)
+        scenario = _read_scenario(scenario_path)
         validate_scenario(scenario)
-        _load_response_bodies(scenario, scenario_path.parent)
     except ValueError as error:
         raise ScenarioError(f"{scenario_path}: {error}") from error
 
     return scenario
 
 
-def _load_response_bodies(scenario: Scenario, scenario_directory: Path) -> None:
-    for route_number, route in enumerate(scenario.routes, start=1):
-        for step_number, step in enumerate(route.steps, start=1):
-            if step.body_file is None:
-                continue
+def _read_scenario(path: Path) -> Scenario:
+    document = _read_toml(path)
 
-            field = f"routes[{route_number}].steps[{step_number}].body_file"
-            body = _read_response_body(scenario_directory, step.body_file, field)
-            validate_response_body(step.status, body, field)
+    expect_only_known_fields(document, {"routes"})
 
-            step.body_file = None
-            step.body = body
+    raw_routes = expect_array(document.get("routes"), "routes")
 
+    routes = [
+        _parse_route(raw_route, f"routes[{route_number}]")
+        for route_number, raw_route in enumerate(raw_routes, start=1)
+    ]
 
-def _read_response_body(scenario_directory: Path, filename: str, field: str) -> str:
-    path = Path(filename)
-    if path.anchor:
-        raise ValueError(f"{field}: expected a path relative to the scenario: {filename!r}")
+    scenario = Scenario(routes=routes)
 
-    response_path = scenario_directory / path
+    _load_response_bodies(scenario, path.parent)
 
-    try:
-        # Opening a device or a named pipe could block scenario loading.
-        if not stat.S_ISREG(response_path.stat().st_mode):
-            raise ValueError("expected a regular file")
-
-        # Decode bytes directly to preserve the file's original line endings.
-        return response_path.read_bytes().decode("utf-8")
-    except UnicodeDecodeError as error:
-        raise ValueError(f"{field}: {filename!r} must be UTF-8") from error
-    except OSError as error:
-        raise ValueError(f"{field}: cannot read {filename!r}: {error.strerror}") from error
-    except ValueError as error:
-        raise ValueError(f"{field}: cannot read {filename!r}: {error}") from error
+    return scenario
 
 
 def _read_toml(path: Path) -> dict[str, object]:
@@ -97,18 +78,6 @@ def _read_toml(path: Path) -> dict[str, object]:
     except ValueError as error:
         # TOMLDecodeError and errors converting oversized integers are ValueErrors.
         raise ScenarioError(f"{path}: invalid TOML: {error}") from error
-
-
-def _parse_scenario(document: dict[str, object]) -> Scenario:
-    expect_only_known_fields(document, {"routes"})
-    raw_routes = expect_array(document.get("routes"), "routes")
-
-    routes = [
-        _parse_route(raw_route, f"routes[{route_number}]")
-        for route_number, raw_route in enumerate(raw_routes, start=1)
-    ]
-
-    return Scenario(routes=routes)
 
 
 def _parse_route(value: object, field: str) -> Route:
@@ -132,6 +101,42 @@ def _parse_route(value: object, field: str) -> Route:
     return Route(id=route_id, method=method, path=path, steps=steps, match=match)
 
 
+def _parse_method(value: object, field: str) -> HttpMethod:
+    for method in SUPPORTED_METHODS:
+        if value == method:
+            return method
+
+    allowed_methods = " or ".join(SUPPORTED_METHODS)
+
+    raise ValueError(f"{field}: expected {allowed_methods}")
+
+
+def _parse_step(value: object, field: str) -> ResponseStep:
+    step_table = expect_table(value, field)
+    allowed_fields = {"status", "headers", "body", "body_file", "delay_ms", "repeat"}
+
+    expect_only_known_fields(step_table, allowed_fields, field)
+
+    status = expect_integer(step_table.get("status"), f"{field}.status")
+    delay_ms = expect_integer(step_table.get("delay_ms", DEFAULT_DELAY_MS), f"{field}.delay_ms")
+    repeat = expect_integer(step_table.get("repeat", DEFAULT_REPEAT), f"{field}.repeat")
+    headers = expect_string_table(step_table.get("headers", {}), f"{field}.headers")
+    body = expect_optional_string(step_table.get("body"), f"{field}.body")
+    body_file = expect_optional_string(step_table.get("body_file"), f"{field}.body_file")
+
+    if body is not None and body_file is not None:
+        raise ValueError(f"{field}: body and body_file cannot be set together")
+
+    return ResponseStep(
+        status=status,
+        headers=headers,
+        body=body,
+        body_file=body_file,
+        delay_ms=delay_ms,
+        repeat=repeat,
+    )
+
+
 def _parse_match(value: object, field: str) -> RouteMatch:
     match_table = expect_table(value, field)
     expect_only_known_fields(match_table, {"headers", "query"}, field)
@@ -142,36 +147,34 @@ def _parse_match(value: object, field: str) -> RouteMatch:
     return RouteMatch(headers=headers, query=query)
 
 
-def _parse_step(value: object, field: str) -> ResponseStep:
-    step_table = expect_table(value, field)
-    allowed_fields = {"status", "headers", "body", "body_file", "delay_ms", "repeat"}
-    expect_only_known_fields(step_table, allowed_fields, field)
+def _load_response_bodies(scenario: Scenario, scenario_directory: Path) -> None:
+    for route_number, route in enumerate(scenario.routes, start=1):
+        for step_number, step in enumerate(route.steps, start=1):
+            if step.body_file is None:
+                continue
 
-    status = expect_integer(step_table.get("status"), f"{field}.status")
-    delay_ms = expect_integer(step_table.get("delay_ms", DEFAULT_DELAY_MS), f"{field}.delay_ms")
-    repeat = expect_integer(step_table.get("repeat", DEFAULT_REPEAT), f"{field}.repeat")
-    headers = expect_string_table(step_table.get("headers", {}), f"{field}.headers")
-    body = expect_optional_string(step_table.get("body"), f"{field}.body")
-    body_file = expect_optional_string(step_table.get("body_file"), f"{field}.body_file")
+            field = f"routes[{route_number}].steps[{step_number}].body_file"
+            step.body = _read_response_body(scenario_directory, step.body_file, field)
+
+
+def _read_response_body(scenario_directory: Path, filename: str, field: str) -> str:
+    path = Path(filename)
+
+    if path.anchor:
+        raise ValueError(f"{field}: expected a path relative to the scenario: {filename!r}")
+
+    response_path = scenario_directory / path
 
     try:
-        return ResponseStep(
-            status=status,
-            headers=headers,
-            body=body,
-            body_file=body_file,
-            delay_ms=delay_ms,
-            repeat=repeat,
-        )
+        # Opening a device or a named pipe could block scenario loading.
+        if not stat.S_ISREG(response_path.stat().st_mode):
+            raise ValueError("expected a regular file")
+
+        # Decode bytes directly to preserve the file's original line endings.
+        return response_path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{field}: {filename!r} must be UTF-8") from error
+    except OSError as error:
+        raise ValueError(f"{field}: cannot read {filename!r}: {error.strerror}") from error
     except ValueError as error:
-        raise ValueError(f"{field}: {error}") from error
-
-
-def _parse_method(value: object, field: str) -> HttpMethod:
-    for method in SUPPORTED_METHODS:
-        if value == method:
-            return method
-
-    allowed_methods = " or ".join(SUPPORTED_METHODS)
-
-    raise ValueError(f"{field}: expected {allowed_methods}")
+        raise ValueError(f"{field}: cannot read {filename!r}: {error}") from error

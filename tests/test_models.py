@@ -1,5 +1,3 @@
-import pytest
-
 from faultbox.models import ResponseStep, Route
 
 
@@ -13,16 +11,18 @@ def test_response_step_uses_defaults() -> None:
     assert step.repeat == 1
 
 
-def test_response_step_with_body_file_has_no_inline_body() -> None:
+def test_response_step_with_body_file_has_no_body_before_loading() -> None:
     step = ResponseStep(status=200, body_file="responses/payment.json")
 
     assert step.body is None
     assert step.body_file == "responses/payment.json"
 
 
-def test_response_step_rejects_empty_inline_body_with_body_file() -> None:
-    with pytest.raises(ValueError, match="body and body_file"):
-        ResponseStep(status=200, body="", body_file="responses/payment.json")
+def test_response_step_can_store_file_path_and_loaded_body() -> None:
+    step = ResponseStep(status=200, body="text", body_file="responses/payment.json")
+
+    assert step.body == "text"
+    assert step.body_file == "responses/payment.json"
 
 
 def test_route_defaults_use_independent_dictionaries() -> None:

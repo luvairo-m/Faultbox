@@ -122,7 +122,7 @@ def test_load_snapshots_utf8_body_file_relative_to_scenario(
     step = load_scenario(scenario_path).routes[0].steps[0]
     response_path.write_bytes(b"updated response")
 
-    assert (step.body, step.body_file) == (original_body, None)
+    assert (step.body, step.body_file) == (original_body, "responses/response.json")
     assert load_scenario(scenario_path).routes[0].steps[0].body == "updated response"
 
 
@@ -145,6 +145,20 @@ def test_load_reports_body_file_errors(tmp_path: Path, filename: str, message: s
     document = _ROUTE_TOML + _STEP_TOML + f'body_file = "{filename}"\n'
 
     _assert_invalid_scenario(tmp_path, document, f"routes[1].steps[1].body_file: {message}")
+
+
+def test_load_reads_all_body_files_before_validating_bodies(tmp_path: Path) -> None:
+    (tmp_path / "response.txt").write_bytes(b"text")
+    document = (
+        _ROUTE_TOML
+        + '[[routes.steps]]\nstatus = 204\nbody_file = "response.txt"\n'
+        + _STEP_TOML
+        + 'body_file = "missing.txt"\n'
+    )
+
+    _assert_invalid_scenario(
+        tmp_path, document, "routes[1].steps[2].body_file: cannot read 'missing.txt'"
+    )
 
 
 def test_load_rejects_an_absolute_body_file_path(tmp_path: Path) -> None:
@@ -468,4 +482,4 @@ def test_load_accepts_valid_status_and_body(
 
     (step,) = load_scenario(scenario_path).routes[0].steps
 
-    assert (step.status, step.body, step.body_file) == (status, expected_body, None)
+    assert (step.status, step.body) == (status, expected_body)
