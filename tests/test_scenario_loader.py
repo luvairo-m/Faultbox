@@ -3,8 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from faultbox.errors import ScenarioError
-from faultbox.models import ResponseStep, RouteMatch
+from faultbox.models import ResponseStep, RouteMatch, ScenarioError
 from faultbox.scenario_loader import load_scenario
 
 

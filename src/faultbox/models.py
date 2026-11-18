@@ -43,3 +43,7 @@ class Route:
 @dataclass
 class Scenario:
     routes: list[Route]
+
+
+class ScenarioError(Exception):
+    """A scenario could not be read or did not pass validation."""
