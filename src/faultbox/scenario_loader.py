@@ -6,7 +6,6 @@ import stat
 import tomllib
 from pathlib import Path
 
-from faultbox.errors import ScenarioError
 from faultbox.models import (
     DEFAULT_DELAY_MS,
     DEFAULT_REPEAT,
@@ -16,6 +15,7 @@ from faultbox.models import (
     Route,
     RouteMatch,
     Scenario,
+    ScenarioError,
 )
 from faultbox.validation.scenario_validation import validate_scenario
 from faultbox.validation.toml_validation import (
