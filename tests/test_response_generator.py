@@ -59,17 +59,22 @@ def test_generate_responses_handles_large_repeat_lazily() -> None:
 def test_generate_responses_preserves_configuration() -> None:
     steps = [
         ResponseStep(
+            status=500,
+            headers={"Retry-After": "1"},
+            body="temporary failure",
+            delay_ms=100,
+            repeat=2,
+        ),
+        ResponseStep(
             status=200,
             headers={"Content-Type": "text/plain"},
             body="loaded text",
             body_file="response.txt",
-            delay_ms=100,
-            repeat=2,
-        )
+        ),
     ]
     original = deepcopy(steps)
 
     responses = list(islice(generate_responses(steps), 4))
 
-    assert responses == [original[0]] * 4
+    assert responses == [original[0], original[0], original[1], original[1]]
     assert steps == original
