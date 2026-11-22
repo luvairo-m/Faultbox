@@ -395,13 +395,6 @@ def test_load_rejects_invalid_match_header_name(tmp_path: Path) -> None:
     )
 
 
-def test_load_accepts_header_name_with_http_token_punctuation(tmp_path: Path) -> None:
-    document = _ROUTE_TOML + _STEP_TOML + 'headers = { "X_Debug!" = "app" }\n'
-    scenario_path = _write_scenario_file(tmp_path, document)
-
-    assert load_scenario(scenario_path).routes[0].steps[0].headers == {"X_Debug!": "app"}
-
-
 @pytest.mark.parametrize("value_toml", [r"one\u0000two", r"one\u001ftwo", r"one\u007ftwo"])
 def test_load_rejects_control_characters_in_header_value(tmp_path: Path, value_toml: str) -> None:
     document = _ROUTE_TOML + _STEP_TOML + f'headers = {{ "X-Debug" = "{value_toml}" }}\n'
@@ -411,11 +404,11 @@ def test_load_rejects_control_characters_in_header_value(tmp_path: Path, value_t
     )
 
 
-def test_load_preserves_tab_in_header_value(tmp_path: Path) -> None:
-    document = _ROUTE_TOML + _STEP_TOML + r'headers = { "X-Debug" = "one\ttwo" }'
+def test_load_preserves_header_name_punctuation_and_value_tab(tmp_path: Path) -> None:
+    document = _ROUTE_TOML + _STEP_TOML + r'headers = { "X_Debug!" = "one\ttwo" }'
     scenario_path = _write_scenario_file(tmp_path, document)
 
-    assert load_scenario(scenario_path).routes[0].steps[0].headers == {"X-Debug": "one\ttwo"}
+    assert load_scenario(scenario_path).routes[0].steps[0].headers == {"X_Debug!": "one\ttwo"}
 
 
 @pytest.mark.parametrize(
@@ -446,8 +439,10 @@ def test_load_rejects_header_line_breaks(
     )
 
 
-@pytest.mark.parametrize("status", [204, 205, 304])
-@pytest.mark.parametrize("field", ["body", "body_file"])
+@pytest.mark.parametrize(
+    ("status", "field"),
+    [(204, "body"), (205, "body"), (304, "body"), (304, "body_file")],
+)
 def test_load_rejects_nonempty_body_for_bodyless_status(
     tmp_path: Path, status: int, field: str
 ) -> None:

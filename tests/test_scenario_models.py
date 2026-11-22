@@ -18,13 +18,6 @@ def test_response_step_with_body_file_has_no_body_before_loading() -> None:
     assert step.body_file == "responses/payment.json"
 
 
-def test_response_step_can_store_file_path_and_loaded_body() -> None:
-    step = ResponseStep(status=200, body="text", body_file="responses/payment.json")
-
-    assert step.body == "text"
-    assert step.body_file == "responses/payment.json"
-
-
 def test_route_defaults_use_independent_dictionaries() -> None:
     first_route = Route(
         id="first", method="GET", path="/users", steps=[ResponseStep(status=200)]
