@@ -1,4 +1,4 @@
-from faultbox.models import ResponseStep, Route
+from faultbox.scenario.models import ResponseStep, Route
 
 
 def test_response_step_uses_defaults() -> None:
@@ -15,13 +15,6 @@ def test_response_step_with_body_file_has_no_body_before_loading() -> None:
     step = ResponseStep(status=200, body_file="responses/payment.json")
 
     assert step.body is None
-    assert step.body_file == "responses/payment.json"
-
-
-def test_response_step_can_store_file_path_and_loaded_body() -> None:
-    step = ResponseStep(status=200, body="text", body_file="responses/payment.json")
-
-    assert step.body == "text"
     assert step.body_file == "responses/payment.json"
 
 

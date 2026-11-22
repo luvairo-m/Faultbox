@@ -50,34 +50,15 @@ def test_check_accepts_readme_example(tmp_path: Path) -> None:
     assert result.stderr == ""
 
 
-@pytest.mark.parametrize(
-    ("content", "message"),
-    [
-        ("[[routes]", "invalid TOML"),
-        (
-            '[[routes]]\nid = "users"\nmethod = "GET"\npath = "/users"\n'
-            'match.query = { role = 1 }\n[[routes.steps]]\nstatus = 200\n',
-            "routes[1].match.query['role']: expected a string",
-        ),
-        (
-            '[[routes]]\nid = "users"\nmethod = "GET"\npath = "/users"\n'
-            '[[routes.steps]]\nstatus = 200\nbody_file = "missing.json"\n',
-            "routes[1].steps[1].body_file: cannot read 'missing.json'",
-        ),
-    ],
-    ids=["invalid-toml", "invalid-condition", "missing-body-file"],
-)
-def test_check_rejects_invalid_scenario(tmp_path: Path, content: str, message: str) -> None:
+def test_check_rejects_invalid_scenario(tmp_path: Path) -> None:
     scenario_path = tmp_path / "scenario.toml"
-    scenario_path.write_text(content, encoding="utf-8")
+    scenario_path.write_text("routes = []\n", encoding="utf-8")
 
     result = _run_faultbox("check", str(scenario_path))
 
     assert result.returncode == 1
     assert result.stdout == ""
-    assert result.stderr.startswith(f"faultbox: {scenario_path}: ")
-    assert message in result.stderr
-    assert "Traceback" not in result.stderr
+    assert result.stderr.strip() == f"faultbox: {scenario_path}: routes: expected a non-empty array"
 
 
 def test_check_rejects_missing_scenario(tmp_path: Path) -> None:

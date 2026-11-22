@@ -6,7 +6,7 @@ import stat
 import tomllib
 from pathlib import Path
 
-from faultbox.models import (
+from faultbox.scenario.models import (
     DEFAULT_DELAY_MS,
     DEFAULT_REPEAT,
     SUPPORTED_METHODS,
@@ -15,10 +15,8 @@ from faultbox.models import (
     Route,
     RouteMatch,
     Scenario,
-    ScenarioError,
 )
-from faultbox.validation.scenario_validation import validate_scenario
-from faultbox.validation.toml_validation import (
+from faultbox.scenario.toml_validation import (
     expect_array,
     expect_integer,
     expect_only_known_fields,
@@ -27,6 +25,11 @@ from faultbox.validation.toml_validation import (
     expect_string_table,
     expect_table,
 )
+from faultbox.scenario.validation import validate_scenario
+
+
+class ScenarioError(Exception):
+    """A scenario could not be read or did not pass validation."""
 
 
 def load_scenario(path: str | Path) -> Scenario:

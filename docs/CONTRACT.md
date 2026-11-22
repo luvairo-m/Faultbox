@@ -12,15 +12,20 @@
 | Исполнитель | Выбирает маршрут, назначает шаг и ведёт счётчики обращений. |
 | HTTP-слой | Разбирает входящий запрос, отделяет служебные обращения и отправляет ответ. Управляет заголовками `Content-Length`, `Transfer-Encoding` и `Connection`. |
 
-`Scenario` хранит список маршрутов `routes`. Модели `Route`, `RouteMatch` и
-`ResponseStep` хранят настройки. Списки сохраняют порядок маршрутов и шагов.
+`Scenario` из `faultbox.scenario.models` хранит список маршрутов `routes`. Модели
+`Route`, `RouteMatch` и `ResponseStep` в том же модуле хранят настройки.
+Списки сохраняют порядок маршрутов и шагов.
 Словари связывают имена заголовков и параметров с их значениями. После загрузки
 модели и их коллекции используются только для чтения.
 
-В пакете `faultbox.validation` модуль `toml_validation` проверяет допустимые
-поля и типы значений TOML. Модуль `scenario_validation` проверяет собранный
+`ScenarioEngine` из `faultbox.engine.runtime` принимает `RequestContext` и
+возвращает `AssignedResponse` для выбранного маршрута. Оба типа определены
+в `faultbox.engine.models`.
+
+В пакете `faultbox.scenario` модуль `toml_validation` проверяет допустимые
+поля и типы значений TOML. Модуль `validation` проверяет собранный
 `Scenario` и указывает место нарушения. Загрузчик добавляет путь к файлу
-при создании `ScenarioError`.
+при создании `ScenarioError` из `faultbox.scenario.loader`.
 
 ### Тело ответа
 
