@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from faultbox.models import ResponseStep, Route, RouteMatch, Scenario
-from faultbox.scenario_engine import AssignedResponse, RequestContext, ScenarioEngine
-from faultbox.scenario_loader import load_scenario
+from faultbox.engine.models import AssignedResponse, RequestContext
+from faultbox.engine.runtime import ScenarioEngine
+from faultbox.scenario.loader import load_scenario
+from faultbox.scenario.models import ResponseStep, Route, RouteMatch, Scenario
 
 
 @pytest.mark.parametrize(

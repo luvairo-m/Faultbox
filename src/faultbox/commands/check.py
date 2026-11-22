@@ -5,8 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from faultbox.models import ScenarioError
-from faultbox.scenario_loader import load_scenario
+from faultbox.scenario.loader import ScenarioError, load_scenario
 
 
 def check_scenario(path: Path) -> int:

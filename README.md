@@ -136,7 +136,10 @@ body = "Unsupported role or missing X-Client header"
 
 ### Состояние маршрутов
 
-`ScenarioEngine` из `faultbox.scenario_engine` принимает загруженный `Scenario`.
+`ScenarioEngine` из `faultbox.engine.runtime` принимает загруженный `Scenario`
+из `faultbox.scenario.models`. Типы `RequestContext` и `AssignedResponse`
+находятся в `faultbox.engine.models`.
+
 Движок создаёт для каждого маршрута собственный генератор. Генератор хранит
 позицию между вызовами и выдаёт шаг по мере обращений, поэтому даже большой
 `repeat` обходится без списка копий. Например, шаги `500` с `repeat = 2` и
@@ -195,12 +198,12 @@ TOML. Контекст запроса уже принимает заголовк
 
 При проверке дублей вариантов регистр имён заголовков и порядок записей в таблицах условий не важны. Отсутствующие и пустые таблицы условий равнозначны.
 
-`faultbox.scenario_loader.load_scenario(path)` разбирает TOML, загружает файлы
+`faultbox.scenario.loader.load_scenario(path)` разбирает TOML, загружает файлы
 ответов и проверяет собранный `Scenario`, включая тела ответов. Загрузчик
 возвращает маршруты в порядке TOML. В готовом шаге `body` содержит текст
 ответа, а `body_file` хранит исходный относительный путь, если он был указан.
 
-`faultbox.models.ScenarioError` указывает файл и место ошибки конфигурации.
+`faultbox.scenario.loader.ScenarioError` указывает файл и место ошибки конфигурации.
 Номера маршрутов и шагов начинаются с 1.
 
 ```text

@@ -3,29 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from itertools import repeat
 
-from faultbox.models import ResponseStep, Route, Scenario
-
-
-@dataclass(frozen=True)
-class RequestContext:
-    method: str
-    path: str
-    headers: dict[str, str] = field(default_factory=dict)
-    query: dict[str, list[str]] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class AssignedResponse:
-    route_id: str
-    step_number: int
-    assignment_number: int
-    status: int
-    headers: dict[str, str]
-    body: str
-    delay_ms: int
+from faultbox.engine.models import AssignedResponse, RequestContext
+from faultbox.scenario.models import ResponseStep, Route, Scenario
 
 
 @dataclass
@@ -44,7 +26,8 @@ class ScenarioEngine:
         for route in scenario.routes:
             key = (route.method, route.path)
             self._routes_by_method_and_path.setdefault(key, []).append(route)
-            self._states[route.id] = _RouteState(_generate_numbered_responses(route.steps))
+            responses = self._generate_numbered_responses(route.steps)
+            self._states[route.id] = _RouteState(responses)
 
     def next_response(self, request: RequestContext) -> AssignedResponse | None:
         """Assign the next step immediately, or return None for an unknown route."""
@@ -53,7 +36,6 @@ class ScenarioEngine:
         if candidates is None:
             return None
 
-        # Until conditions are supported, use the first method/path candidate.
         route_id = candidates[0].id
         state = self._states[route_id]
 
@@ -74,13 +56,13 @@ class ScenarioEngine:
             delay_ms=step.delay_ms,
         )
 
+    @staticmethod
+    def _generate_numbered_responses(
+        steps: list[ResponseStep],
+    ) -> Iterator[tuple[int, ResponseStep]]:
+        """Yield one-based step numbers with their steps, repeating the last forever."""
+        for step_number, step in enumerate(steps, start=1):
+            for _ in range(step.repeat):
+                yield step_number, step
 
-def _generate_numbered_responses(
-    steps: list[ResponseStep],
-) -> Iterator[tuple[int, ResponseStep]]:
-    """Yield one-based step numbers with their steps, repeating the last forever."""
-    for step_number, step in enumerate(steps, start=1):
-        for _ in range(step.repeat):
-            yield step_number, step
-
-    yield from repeat((len(steps), steps[-1]))
+        yield from repeat((len(steps), steps[-1]))

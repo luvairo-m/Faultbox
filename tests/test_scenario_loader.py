@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from faultbox.models import ResponseStep, RouteMatch, ScenarioError
-from faultbox.scenario_loader import load_scenario
+from faultbox.scenario.loader import ScenarioError, load_scenario
+from faultbox.scenario.models import ResponseStep, RouteMatch
 
 
 _ROUTE_TOML = '[[routes]]\nid = "payments"\nmethod = "GET"\npath = "/payments"\n'

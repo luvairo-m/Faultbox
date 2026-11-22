@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from string import ascii_letters, digits
 
-from faultbox.models import HttpMethod, ResponseStep, Route, Scenario
+from faultbox.scenario.models import HttpMethod, ResponseStep, Route, Scenario
 
 
 _NO_BODY_STATUSES = {204, 205, 304}
 _SERVER_MANAGED_HEADERS = {"content-length", "transfer-encoding", "connection"}
-# HTTP field names use the token characters defined in RFC 9110.
 _HEADER_NAME_CHARS = frozenset(ascii_letters + digits + "!#$%&'*+-.^_`|~")
-
 _RouteVariantKey = tuple[HttpMethod, str, frozenset[tuple[str, str]], frozenset[tuple[str, str]]]
 
 
@@ -30,7 +28,6 @@ def validate_scenario(scenario: Scenario) -> None:
         if route.id in seen_route_ids:
             raise ValueError(f"{field}.id: duplicate route id {route.id!r}")
 
-        # Frozen sets let us compare conditions independently of their order.
         variant_key = (
             route.method,
             route.path,
@@ -112,7 +109,7 @@ def _validate_header(name: str, value: str, field: str) -> None:
 
 
 def _validate_step(step: ResponseStep, field: str) -> None:
-    # Python's int annotation also accepts bool, so models need this check too.
+    # Steps created directly in Python bypass TOML field checks.
     for field_name, field_value in (
         ("status", step.status),
         ("delay_ms", step.delay_ms),

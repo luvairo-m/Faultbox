@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from faultbox.models import ResponseStep, Route, Scenario
-from faultbox.validation.scenario_validation import validate_response_body, validate_scenario
+from faultbox.scenario.models import ResponseStep, Route, Scenario
+from faultbox.scenario.validation import validate_response_body, validate_scenario
 
 
 @pytest.mark.parametrize(

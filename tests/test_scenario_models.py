@@ -1,4 +1,4 @@
-from faultbox.models import ResponseStep, Route
+from faultbox.scenario.models import ResponseStep, Route
 
 
 def test_response_step_uses_defaults() -> None:
