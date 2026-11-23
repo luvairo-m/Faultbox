@@ -7,6 +7,11 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class RequestContext:
+    """Request data for route matching.
+
+    The caller passes the exact path separately from the decoded query parameters.
+    """
+
     method: str
     path: str
     headers: dict[str, str] = field(default_factory=dict)
