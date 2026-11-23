@@ -66,6 +66,67 @@ def test_routes_advance_independently() -> None:
     ]
 
 
+def test_response_sequences_and_counts_are_isolated_by_route_and_group() -> None:
+    scenario = Scenario(
+        routes=[
+            Route(
+                "priority",
+                "GET",
+                "/items",
+                [ResponseStep(503, repeat=2), ResponseStep(200)],
+                match=RouteMatch(query={"priority": "yes"}),
+            ),
+            Route("fallback", "GET", "/items", [ResponseStep(500), ResponseStep(204)]),
+        ]
+    )
+    engine = ScenarioEngine(scenario)
+    case_a = {"X-Test-Case-ID": "A"}
+    case_b = {"X-Test-Case-ID": "B"}
+    named_default = {"X-Test-Case-ID": "default"}
+    priority = {"priority": ["yes"]}
+
+    requests = [
+        (case_a, priority, ("priority", 1, 503)),
+        (case_b, priority, ("priority", 1, 503)),
+        ({}, priority, ("priority", 1, 503)),
+        (case_a, {}, ("fallback", 1, 500)),
+        (case_b, {}, ("fallback", 1, 500)),
+        (named_default, priority, ("priority", 1, 503)),
+        ({}, {}, ("fallback", 1, 500)),
+        ({"x-test-case-id": "\tA "}, priority, ("priority", 2, 503)),
+        ({"X-Test-Case-ID": "a"}, priority, ("priority", 1, 503)),
+        (case_b, priority, ("priority", 2, 503)),
+        (case_a, priority, ("priority", 3, 200)),
+        ({}, priority, ("priority", 2, 503)),
+        (named_default, priority, ("priority", 2, 503)),
+        ({}, {}, ("fallback", 2, 204)),
+        (case_a, {}, ("fallback", 2, 204)),
+        (case_a, priority, ("priority", 4, 200)),
+    ]
+
+    for headers, query, expected in requests:
+        request = RequestContext("GET", "/items", headers, query)
+        response = engine.next_response(request)
+
+        assert response is not None, request
+        assert (response.route_id, response.assignment_number, response.status) == expected, request
+
+
+@pytest.mark.parametrize("blank_id", ["", " \t "], ids=["empty", "whitespace"])
+def test_blank_test_case_id_uses_the_same_group_as_missing_header(blank_id: str) -> None:
+    scenario = Scenario(
+        routes=[Route("items", "GET", "/items", [ResponseStep(503), ResponseStep(200)])]
+    )
+    engine = ScenarioEngine(scenario)
+    first = engine.next_response(RequestContext("GET", "/items"))
+    second = engine.next_response(RequestContext("GET", "/items", {"X-Test-Case-ID": blank_id}))
+
+    assert first is not None
+    assert second is not None
+    assert (first.assignment_number, first.status) == (1, 503)
+    assert (second.assignment_number, second.status) == (2, 200)
+
+
 def test_unknown_request_does_not_consume_a_step() -> None:
     scenario = Scenario(
         routes=[
@@ -154,14 +215,15 @@ def test_route_variants_match_in_scenario_order(
     assert (response.route_id, response.status) == (route_id, status)
 
 
-def test_new_engine_starts_over_and_preserves_configuration() -> None:
+@pytest.mark.parametrize("headers", [{}, {"X-Test-Case-ID": "A"}], ids=["shared", "named"])
+def test_new_engine_starts_over_and_preserves_configuration(headers: dict[str, str]) -> None:
     first_step = ResponseStep(503, headers={"Retry-After": "1"}, body="retry", delay_ms=150)
     scenario = Scenario(
         routes=[Route("items", "GET", "/items", [first_step, ResponseStep(200)])]
     )
     original = deepcopy(scenario)
     engine = ScenarioEngine(scenario)
-    request = RequestContext("GET", "/items")
+    request = RequestContext("GET", "/items", headers)
 
     expected = AssignedResponse(
         route_id="items",
