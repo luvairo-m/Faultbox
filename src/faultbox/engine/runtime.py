@@ -17,32 +17,36 @@ class _RouteState:
 
 
 class ScenarioEngine:
-    """Keep independent response sequences for the routes of a loaded scenario."""
+    """Keep independent response sequences per route and test case."""
 
     def __init__(self, scenario: Scenario) -> None:
         self._routes_by_method_and_path: dict[tuple[str, str], list[Route]] = {}
-        self._states: dict[str, _RouteState] = {}
+        self._states: dict[tuple[str, str | None], _RouteState] = {}
 
         for route in scenario.routes:
             key = (route.method, route.path)
             self._routes_by_method_and_path.setdefault(key, []).append(route)
-            responses = self._generate_numbered_responses(route.steps)
-            self._states[route.id] = _RouteState(responses)
 
     def next_response(self, request: RequestContext) -> AssignedResponse | None:
         """Assign the next step immediately, or return None if no route matches."""
-        route = self._select_route(request)
+        headers = {name.lower(): value for name, value in request.headers.items()}
+        route = self._select_route(request, headers)
 
         if route is None:
             return None
 
-        state = self._states[route.id]
+        test_case_id = headers.get("x-test-case-id", "").strip(" \t") or None
+        state_key = (route.id, test_case_id)
+        state = self._states.get(state_key)
+
+        if state is None:
+            state = _RouteState(self._generate_numbered_responses(route.steps))
+            self._states[state_key] = state
 
         step_number, step = next(state.responses)
-
         state.assignment_count += 1
-        body = step.body
 
+        body = step.body
         assert body is not None, "ScenarioEngine requires loaded response bodies"
 
         return AssignedResponse(
@@ -55,13 +59,11 @@ class ScenarioEngine:
             delay_ms=step.delay_ms,
         )
 
-    def _select_route(self, request: RequestContext) -> Route | None:
+    def _select_route(self, request: RequestContext, headers: dict[str, str]) -> Route | None:
         candidates = self._routes_by_method_and_path.get((request.method, request.path))
 
         if candidates is None:
             return None
-
-        headers = {name.lower(): value for name, value in request.headers.items()}
 
         for route in candidates:
             if not all(

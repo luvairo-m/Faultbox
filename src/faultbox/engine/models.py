@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class RequestContext:
-    """Request data for route matching.
+    """Request data for route matching and test isolation.
 
     The caller passes the exact path separately from the decoded query parameters.
     """
