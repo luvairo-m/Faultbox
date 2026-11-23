@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+from urllib.parse import parse_qs
 
 import pytest
 
@@ -67,13 +68,30 @@ def test_routes_advance_independently() -> None:
 
 def test_unknown_request_does_not_consume_a_step() -> None:
     scenario = Scenario(
-        routes=[Route("items", "GET", "/items", [ResponseStep(200), ResponseStep(204)])]
+        routes=[
+            Route(
+                "items",
+                "GET",
+                "/items",
+                [ResponseStep(200), ResponseStep(204)],
+                match=RouteMatch(
+                    headers={"X-Client": "backend", "X-Mode": ""},
+                    query={"tag": "python", "label": ""},
+                ),
+            )
+        ]
     )
     engine = ScenarioEngine(scenario)
+    headers = {"X-Client": "backend", "X-Mode": ""}
+    query = {"tag": ["python"], "label": [""]}
+    missing_header = RequestContext("GET", "/items", {"X-Client": "backend"}, query)
+    missing_query = RequestContext("GET", "/items", headers, {"tag": ["python"]})
 
-    assert engine.next_response(RequestContext("GET", "/missing")) is None
-    assert engine.next_response(RequestContext("POST", "/items")) is None
-    assert engine.next_response(RequestContext("GET", "/items")) == AssignedResponse(
+    assert engine.next_response(RequestContext("GET", "/items/", headers, query)) is None
+    assert engine.next_response(RequestContext("POST", "/items", headers, query)) is None
+    assert engine.next_response(missing_header) is None
+    assert engine.next_response(missing_query) is None
+    assert engine.next_response(RequestContext("GET", "/items", headers, query)) == AssignedResponse(
         route_id="items",
         step_number=1,
         assignment_number=1,
@@ -84,28 +102,56 @@ def test_unknown_request_does_not_consume_a_step() -> None:
     )
 
 
-def test_route_variants_keep_scenario_order() -> None:
+@pytest.mark.parametrize(
+    ("headers", "query_string", "route_id", "status"),
+    [
+        ({"X-Client": "backend"}, "role=admin", "users-admin", 200),
+        ({}, "role=guest", "users-guest", 200),
+        ({}, "role=admin", "users-fallback", 400),
+        ({}, "", "users-fallback", 400),
+        (
+            {"x-cLiEnT": "backend", "X-Test-Case-ID": "case-a"},
+            "role=admin&extra=1",
+            "users-admin",
+            200,
+        ),
+        ({"X-Client": "Backend"}, "role=admin", "users-fallback", 400),
+        ({"X-Client": "backend"}, "Role=admin", "users-fallback", 400),
+        ({"X-Client": "backend"}, "role=Admin", "users-fallback", 400),
+        ({"X-Client": "backend"}, "role=admin&role=guest", "users-guest", 200),
+        ({"X-Client": "backend"}, "role=other&r%6Fle=%61dmin&role=other", "users-admin", 200),
+    ],
+)
+def test_route_variants_match_in_scenario_order(
+    headers: dict[str, str], query_string: str, route_id: str, status: int
+) -> None:
     scenario = Scenario(
         routes=[
             Route(
-                "specific",
+                "users-guest",
                 "GET",
-                "/items",
-                [ResponseStep(201)],
-                match=RouteMatch(headers={"X-Mode": "special"}, query={"tag": "python"}),
+                "/users",
+                [ResponseStep(200)],
+                match=RouteMatch(query={"role": "guest"}),
             ),
-            Route("fallback", "GET", "/items", [ResponseStep(200)]),
+            Route(
+                "users-admin",
+                "GET",
+                "/users",
+                [ResponseStep(200)],
+                match=RouteMatch(headers={"X-Client": "backend"}, query={"role": "admin"}),
+            ),
+            Route("users-fallback", "GET", "/users", [ResponseStep(400)]),
         ]
     )
     engine = ScenarioEngine(scenario)
-    request = RequestContext(
-        "GET", "/items", headers={"X-Mode": "special"}, query={"tag": ["python"]}
-    )
+    query = parse_qs(query_string, keep_blank_values=True)
+    request = RequestContext("GET", "/users", headers, query)
 
     response = engine.next_response(request)
 
     assert response is not None
-    assert (response.route_id, response.step_number, response.status) == ("specific", 1, 201)
+    assert (response.route_id, response.status) == (route_id, status)
 
 
 def test_new_engine_starts_over_and_preserves_configuration() -> None:

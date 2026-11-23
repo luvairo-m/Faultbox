@@ -30,14 +30,13 @@ class ScenarioEngine:
             self._states[route.id] = _RouteState(responses)
 
     def next_response(self, request: RequestContext) -> AssignedResponse | None:
-        """Assign the next step immediately, or return None for an unknown route."""
-        candidates = self._routes_by_method_and_path.get((request.method, request.path))
+        """Assign the next step immediately, or return None if no route matches."""
+        route = self._select_route(request)
 
-        if candidates is None:
+        if route is None:
             return None
 
-        route_id = candidates[0].id
-        state = self._states[route_id]
+        state = self._states[route.id]
 
         step_number, step = next(state.responses)
 
@@ -47,7 +46,7 @@ class ScenarioEngine:
         assert body is not None, "ScenarioEngine requires loaded response bodies"
 
         return AssignedResponse(
-            route_id=route_id,
+            route_id=route.id,
             step_number=step_number,
             assignment_number=state.assignment_count,
             status=step.status,
@@ -55,6 +54,25 @@ class ScenarioEngine:
             body=body,
             delay_ms=step.delay_ms,
         )
+
+    def _select_route(self, request: RequestContext) -> Route | None:
+        candidates = self._routes_by_method_and_path.get((request.method, request.path))
+
+        if candidates is None:
+            return None
+
+        headers = {name.lower(): value for name, value in request.headers.items()}
+
+        for route in candidates:
+            if not all(
+                headers.get(name.lower()) == value for name, value in route.match.headers.items()
+            ):
+                continue
+
+            if all(value in request.query.get(name, ()) for name, value in route.match.query.items()):
+                return route
+
+        return None
 
     @staticmethod
     def _generate_numbered_responses(
