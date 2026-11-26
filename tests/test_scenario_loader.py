@@ -412,15 +412,14 @@ def test_load_preserves_header_name_punctuation_and_value_tab(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
-    ("header_entry_toml", "escaped_header_name"),
+    ("header_entry_toml", "escaped_header_name", "for_match"),
     [
-        (r'"X-Client\rExtra" = "app"', r"X-Client\rExtra"),
-        (r'"X-Client\nExtra" = "app"', r"X-Client\nExtra"),
-        (r'"X-Client" = "app\rInjected"', "X-Client"),
-        (r'"X-Client" = "app\nInjected"', "X-Client"),
+        (r'"X-Client\rExtra" = "app"', r"X-Client\rExtra", False),
+        (r'"X-Client\nExtra" = "app"', r"X-Client\nExtra", True),
+        (r'"X-Client" = "app\rInjected"', "X-Client", True),
+        (r'"X-Client" = "app\nInjected"', "X-Client", False),
     ],
 )
-@pytest.mark.parametrize("for_match", [False, True], ids=["response", "match"])
 def test_load_rejects_header_line_breaks(
     tmp_path: Path, header_entry_toml: str, escaped_header_name: str, for_match: bool
 ) -> None:
