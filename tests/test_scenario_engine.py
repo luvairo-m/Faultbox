@@ -32,30 +32,24 @@ def test_engine_assigns_steps_in_order(
     engine = ScenarioEngine(Scenario(routes=[Route("items", "GET", "/items", steps)]))
     request = RequestContext("GET", "/items")
 
-    for step_number, status in expected:
+    for assignment_number, (step_number, status) in enumerate(expected, start=1):
         response = engine.next_response(request)
         assert response is not None
         assert (response.step_number, response.status) == (step_number, status)
+        assert response.assignment_number == assignment_number
 
 
 def test_concurrent_first_requests_share_one_sequence_per_route_and_test_case() -> None:
+    steps = [ResponseStep(503), ResponseStep(502), ResponseStep(200)]
     scenario = Scenario(
-        routes=[
-            Route(
-                route_id,
-                "GET",
-                f"/{route_id}",
-                [ResponseStep(503), ResponseStep(502), ResponseStep(200)],
-            )
-            for route_id in ("items", "users")
-        ]
+        routes=[Route("read", "GET", "/items", steps), Route("write", "POST", "/items", steps)]
     )
     engine = ScenarioEngine(scenario)
-    groups = [("items", "case-a"), ("items", "case-b"), ("users", "case-a")]
+    groups = [("read", "GET", "case-a"), ("read", "GET", "case-b"), ("write", "POST", "case-a")]
     start = Barrier(2 * len(groups), timeout=5)
 
-    def assign(route_id: str, test_case: str) -> tuple[int, int, int]:
-        request = RequestContext("GET", f"/{route_id}", {"X-Test-Case-ID": test_case})
+    def assign(route_id: str, method: str, test_case: str) -> tuple[int, int, int]:
+        request = RequestContext(method, "/items", {"X-Test-Case-ID": test_case})
         start.wait()
         response = engine.next_response(request)
 
@@ -65,42 +59,12 @@ def test_concurrent_first_requests_share_one_sequence_per_route_and_test_case() 
 
     with ThreadPoolExecutor(max_workers=start.parties) as workers:
         assignments = {
-            (route_id, test_case): [workers.submit(assign, route_id, test_case) for _ in range(2)]
-            for route_id, test_case in groups
+            group: [workers.submit(assign, *group) for _ in range(2)]
+            for group in groups
         }
 
     for group, futures in assignments.items():
         assert sorted(future.result() for future in futures) == [(1, 1, 503), (2, 2, 502)], group
-
-
-def test_routes_advance_independently() -> None:
-    scenario = Scenario(
-        routes=[
-            Route("read", "GET", "/items", [ResponseStep(503, repeat=2), ResponseStep(200)]),
-            Route("write", "POST", "/items", [ResponseStep(500), ResponseStep(201)]),
-        ]
-    )
-    engine = ScenarioEngine(scenario)
-    read_request = RequestContext("GET", "/items")
-    write_request = RequestContext("POST", "/items")
-    requests = [read_request, write_request, read_request, read_request, write_request, read_request]
-
-    assignments = []
-    for request in requests:
-        response = engine.next_response(request)
-        assert response is not None
-        assignments.append(
-            (response.route_id, response.step_number, response.assignment_number, response.status)
-        )
-
-    assert assignments == [
-        ("read", 1, 1, 503),
-        ("write", 1, 1, 500),
-        ("read", 1, 2, 503),
-        ("read", 2, 3, 200),
-        ("write", 2, 2, 201),
-        ("read", 2, 4, 200),
-    ]
 
 
 def test_response_sequences_and_counts_are_isolated_by_route_and_group() -> None:

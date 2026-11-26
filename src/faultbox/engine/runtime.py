@@ -18,7 +18,10 @@ class _RouteState:
 
 
 class ScenarioEngine:
-    """Keep independent response sequences per route and test case."""
+    """Keep independent response sequences per route and test case.
+
+    The loaded scenario is treated as read-only while the engine is in use.
+    """
 
     def __init__(self, scenario: Scenario) -> None:
         self._routes_by_method_and_path: dict[tuple[str, str], list[Route]] = {}
@@ -30,7 +33,7 @@ class ScenarioEngine:
             self._routes_by_method_and_path.setdefault(key, []).append(route)
 
     def next_response(self, request: RequestContext) -> AssignedResponse | None:
-        """Assign the next step immediately, or return None if no route matches."""
+        """Assign the next step atomically, or return None if no route matches."""
         headers = {name.lower(): value for name, value in request.headers.items()}
         route = self._select_route(request, headers)
 

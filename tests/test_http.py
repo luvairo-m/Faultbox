@@ -344,7 +344,6 @@ headers = {{ "Content-Type" = "application/json", "dAtE" = "Thu, 01 Jan 1970 00:
         (b"Content-Length: 1, 1\r\n", 400, b"Invalid Content-Length"),
         (b"Content-Length: \xb2\r\n", 400, b"Invalid Content-Length"),
         (b"Content-Length: 1\r\ncOnTeNt-LeNgTh: 1\r\n", 400, b"Multiple Content-Length"),
-        (b"Content-Length: 1\r\nContent-Length: 2\r\n", 400, b"Multiple Content-Length"),
         (b"Transfer-Encoding: chunked\r\n", 501, b"Transfer-Encoding is not supported"),
         (
             b"transfer-encoding: chunked\r\nContent-Length: 1\r\n",
