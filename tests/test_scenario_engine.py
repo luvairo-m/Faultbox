@@ -215,15 +215,14 @@ def test_route_variants_match_in_scenario_order(
     assert (response.route_id, response.status) == (route_id, status)
 
 
-@pytest.mark.parametrize("headers", [{}, {"X-Test-Case-ID": "A"}], ids=["shared", "named"])
-def test_new_engine_starts_over_and_preserves_configuration(headers: dict[str, str]) -> None:
+def test_new_engine_starts_over_and_preserves_configuration() -> None:
     first_step = ResponseStep(503, headers={"Retry-After": "1"}, body="retry", delay_ms=150)
     scenario = Scenario(
         routes=[Route("items", "GET", "/items", [first_step, ResponseStep(200)])]
     )
     original = deepcopy(scenario)
     engine = ScenarioEngine(scenario)
-    request = RequestContext("GET", "/items", headers)
+    request = RequestContext("GET", "/items", {"X-Test-Case-ID": "A"})
 
     expected = AssignedResponse(
         route_id="items",

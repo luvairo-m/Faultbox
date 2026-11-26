@@ -2,11 +2,12 @@ from collections.abc import Iterator, Mapping
 from contextlib import closing, contextmanager
 from http.client import HTTPConnection, HTTPMessage
 from pathlib import Path
-from socket import create_connection
+from socket import SHUT_WR, create_connection
 from threading import Thread
 
 import pytest
 
+from faultbox import server as http_server
 from faultbox.engine.runtime import ScenarioEngine
 from faultbox.scenario.loader import load_scenario
 from faultbox.server import HOST, create_server
@@ -39,6 +40,42 @@ def _request(
 
         with connection.getresponse() as response:
             return response.status, response.headers, response.read()
+
+
+def _raw_request(port: int, request: bytes, *, end_body: bool = False) -> bytes:
+    with create_connection((HOST, port), timeout=2) as connection:
+        connection.sendall(request)
+        if end_body:
+            connection.shutdown(SHUT_WR)
+
+        with connection.makefile("rb") as stream:
+            return stream.read()
+
+
+@pytest.fixture
+def request_scenario_path(tmp_path: Path) -> Path:
+    scenario_path = tmp_path / "scenario.toml"
+    routes = []
+    for method in ("GET", "POST"):
+        routes.append(
+            f'''\
+[[routes]]
+id = "{method.lower()}-body"
+method = "{method}"
+path = "/body"
+
+[[routes.steps]]
+status = 201
+body = "first"
+
+[[routes.steps]]
+status = 202
+body = "next"
+'''
+        )
+
+    scenario_path.write_text("\n".join(routes), encoding="utf-8")
+    return scenario_path
 
 
 @pytest.mark.parametrize(
@@ -188,7 +225,7 @@ status = 200
 
 @pytest.mark.parametrize(
     ("status_code", "length_headers"),
-    [(204, []), (205, [b"content-length: 0"]), (304, [])],
+    [(200, [b"content-length: 0"]), (204, []), (205, [b"content-length: 0"]), (304, [])],
 )
 def test_sends_empty_responses_without_incorrect_length(
     tmp_path: Path, status_code: int, length_headers: list[bytes]
@@ -219,3 +256,196 @@ status = {status_code}
     assert [
         line for line in headers.lower().splitlines() if line.startswith(b"content-length:")
     ] == length_headers
+    assert b"connection: close" in headers.lower().splitlines()
+    assert not any(line.startswith(b"transfer-encoding:") for line in headers.lower().splitlines())
+
+
+@pytest.mark.parametrize("body_source", ["body", "body_file"])
+def test_preserves_response_bytes_and_custom_headers(
+    tmp_path: Path, body_source: str
+) -> None:
+    body_text = '{"message": "Ошибка 🌍",\ninvalid JSON'
+    scenario_path = tmp_path / "scenario.toml"
+    if body_source == "body_file":
+        (tmp_path / "response.txt").write_bytes(body_text.encode("utf-8"))
+        body_field = 'body_file = "response.txt"'
+    else:
+        body_field = f"body = '''{body_text}'''"
+
+    scenario_path.write_text(
+        f'''\
+[[routes]]
+id = "raw"
+method = "GET"
+path = "/raw"
+
+[[routes.steps]]
+status = 200
+{body_field}
+headers = {{ "Content-Type" = "application/json", "dAtE" = "Thu, 01 Jan 1970 00:00:00 GMT" }}
+''',
+        encoding="utf-8",
+    )
+
+    with _running_server(scenario_path) as port:
+        status, headers, body = _request(port, "GET", "/raw")
+
+    assert (status, body) == (200, body_text.encode("utf-8"))
+    assert headers.get_all("Content-Length") == [str(len(body))]
+    assert headers.get_all("Date") == ["Thu, 01 Jan 1970 00:00:00 GMT"]
+    assert headers.get_all("Content-Type") == ["application/json"]
+    assert headers.get_all("Connection") == ["close"]
+    assert headers.get_all("Transfer-Encoding") is None
+
+
+@pytest.mark.parametrize(
+    ("request_headers", "expected_status", "message"),
+    [
+        (b"Content-Length: -1\r\n", 400, b"Invalid Content-Length"),
+        (b"Content-Length: +1\r\n", 400, b"Invalid Content-Length"),
+        (b"Content-Length: text\r\n", 400, b"Invalid Content-Length"),
+        (b"Content-Length: \r\n", 400, b"Invalid Content-Length"),
+        (b"Content-Length: 1, 1\r\n", 400, b"Invalid Content-Length"),
+        (b"Content-Length: \xb2\r\n", 400, b"Invalid Content-Length"),
+        (b"Content-Length: 1\r\ncOnTeNt-LeNgTh: 1\r\n", 400, b"Multiple Content-Length"),
+        (b"Content-Length: 1\r\nContent-Length: 2\r\n", 400, b"Multiple Content-Length"),
+        (b"Transfer-Encoding: chunked\r\n", 501, b"Transfer-Encoding is not supported"),
+        (
+            b"transfer-encoding: chunked\r\nContent-Length: 1\r\n",
+            400,
+            b"Transfer-Encoding and Content-Length cannot be combined",
+        ),
+        (b"Content-Length: 1048577\r\n", 413, b"Request body exceeds 1048576 bytes"),
+        pytest.param(
+            b"Content-Length: " + b"9" * 5000 + b"\r\n",
+            413,
+            b"Request body exceeds 1048576 bytes",
+            id="oversized-number",
+        ),
+        (b"Expect: 100-continue\r\nContent-Length: 1\r\n", 417, b"Expect is not supported"),
+    ],
+)
+def test_rejects_unsupported_body_framing_before_reading_or_assigning(
+    request_scenario_path: Path, request_headers: bytes, expected_status: int, message: bytes
+) -> None:
+    request = b"POST /body HTTP/1.1\r\nHost: localhost\r\n" + request_headers + b"\r\n"
+    with _running_server(request_scenario_path) as port:
+        response = _raw_request(port, request)
+        status, _, body = _request(port, "POST", "/body")
+
+    headers, separator, error_body = response.partition(b"\r\n\r\n")
+    assert int(headers.split()[1]) == expected_status
+    assert b"connection: close" in headers.lower().splitlines()
+    assert separator == b"\r\n\r\n" and message in error_body
+    assert (status, body) == (201, b"first")
+
+
+@pytest.mark.parametrize(
+    ("method", "request_body"),
+    [
+        ("POST", b""),
+        ("GET", "Кириллица 🌍".encode("utf-8")),
+        ("POST", b"\x00\xff\xfe"),
+        ("POST", b"x" * 4096),
+        ("POST", b"x" * 4095 + "🌍".encode("utf-8")),
+        ("POST", b"x" * 1048576),
+    ],
+    ids=["empty", "unicode", "binary", "preview-limit", "split-unicode", "body-limit"],
+)
+def test_reads_body_and_keeps_only_a_bounded_preview(
+    request_scenario_path: Path, monkeypatch: pytest.MonkeyPatch, method: str, request_body: bytes
+) -> None:
+    previews: list[http_server.RequestBodyPreview] = []
+
+    def capture_preview(
+        handler: http_server._ScenarioHandler, code: int | str = "-", size: int | str = "-"
+    ) -> None:
+        previews.append(handler.request_body_preview)
+
+    monkeypatch.setattr(http_server._ScenarioHandler, "log_request", capture_preview)
+    with _running_server(request_scenario_path) as port:
+        status, _, body = _request(port, method, "/body", body=request_body)
+
+    assert (status, body) == (201, b"first")
+    assert len(previews) == 1
+    assert previews[0].data == request_body[:4096]
+    assert previews[0].truncated == (len(request_body) > 4096)
+
+
+@pytest.mark.parametrize("failure", ["timeout", "early-eof", "deadline"])
+def test_incomplete_body_does_not_consume_a_step(
+    request_scenario_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    monkeypatch.setattr(http_server._ScenarioHandler, "timeout", 0.1)
+    if failure == "deadline":
+        # Even with incoming data, the next iteration must respect the total deadline.
+        read_times = iter([0.0, 0.0, 1.0])
+        monkeypatch.setattr(http_server, "monotonic", lambda: next(read_times, 1.0))
+
+    request = b"POST /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4097\r\n\r\n"
+    request += b"x" * 4096
+    end_body = failure == "early-eof"
+    with _running_server(request_scenario_path) as port:
+        response = _raw_request(port, request, end_body=end_body)
+        status, _, body = _request(port, "POST", "/body")
+
+    assert int(response.split()[1]) == (400 if end_body else 408)
+    message = b"Incomplete request body" if end_body else b"Timed out reading request body"
+    assert message in response
+    assert (status, body) == (201, b"first")
+
+
+@pytest.mark.parametrize("method", ["PUT", "HEAD"])
+def test_unsupported_methods_return_501(request_scenario_path: Path, method: str) -> None:
+    with _running_server(request_scenario_path) as port:
+        status, headers, _ = _request(port, method, "/body")
+        next_status, _, next_body = _request(port, "POST", "/body")
+
+    assert status == 501
+    assert headers["Connection"] == "close"
+    assert (next_status, next_body) == (201, b"first")
+
+
+def test_missing_length_means_empty_body(request_scenario_path: Path) -> None:
+    request = b"POST /body HTTP/1.1\r\nHost: localhost\r\n\r\n"
+    with _running_server(request_scenario_path) as port:
+        response = _raw_request(port, request)
+
+    headers, _, body = response.partition(b"\r\n\r\n")
+    assert int(headers.split()[1]) == 201
+    assert body == b"first"
+
+
+def test_headerless_get_still_serves_response(request_scenario_path: Path) -> None:
+    with _running_server(request_scenario_path) as port:
+        response = _raw_request(port, b"GET /body\r\n\r\n")
+
+    assert response == b"first"
+
+
+def test_content_length_accepts_leading_zeros(request_scenario_path: Path) -> None:
+    request = b"POST /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: "
+    request += b"0" * 5000 + b"1\r\n\r\nx"
+    with _running_server(request_scenario_path) as port:
+        response = _raw_request(port, request)
+
+    headers, _, body = response.partition(b"\r\n\r\n")
+    assert int(headers.split()[1]) == 201
+    assert body == b"first"
+
+
+def test_closes_after_one_request_even_with_keep_alive(request_scenario_path: Path) -> None:
+    first_request = (
+        b"POST /body HTTP/1.1\r\nHost: localhost\r\n"
+        b"Content-Length: 4\r\nConnection: keep-alive\r\n\r\ndata"
+    )
+    second_request = b"POST /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n"
+    with _running_server(request_scenario_path) as port:
+        response = _raw_request(port, first_request + second_request)
+        next_status, _, next_body = _request(port, "POST", "/body")
+
+    headers, _, body = response.partition(b"\r\n\r\n")
+    assert int(headers.split()[1]) == 201
+    assert b"connection: close" in headers.lower().splitlines()
+    assert body == b"first"
+    assert (next_status, next_body) == (202, b"next")
