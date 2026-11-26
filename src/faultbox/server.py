@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import TIMEOUT_MAX, Event
 from time import monotonic
 from urllib.parse import parse_qs, urlsplit
 
@@ -91,6 +92,9 @@ class _ScenarioHandler(BaseHTTPRequestHandler):
 
         if response is None:
             self.send_error(HTTPStatus.NOT_FOUND)
+            return
+
+        if self.server.delay_interrupted(response.delay_ms):
             return
 
         self._send_scenario_response(response)
@@ -194,7 +198,24 @@ class _LocalHTTPServer(ThreadingHTTPServer):
 
     def __init__(self, port: int, engine: ScenarioEngine) -> None:
         self.engine = engine
+        self.stopping = Event()
         super().__init__((HOST, port), _ScenarioHandler)
+
+    def delay_interrupted(self, delay_ms: int) -> bool:
+        # Event.wait has a platform timeout limit; TOML delays can be larger.
+        while delay_ms > 0:
+            interval_ms = min(delay_ms, int(TIMEOUT_MAX) * 1000)
+
+            if self.stopping.wait(interval_ms / 1000):
+                return True
+
+            delay_ms -= interval_ms
+
+        return False
+
+    def server_close(self) -> None:
+        self.stopping.set()
+        super().server_close()
 
 
 def create_server(port: int, engine: ScenarioEngine) -> ThreadingHTTPServer:

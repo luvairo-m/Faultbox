@@ -1,0 +1,22 @@
+[[routes]]
+id = "slow"
+method = "GET"
+path = "/slow"
+
+[[routes.steps]]
+status = 200
+body = "Delayed response"
+delay_ms = 3000
+
+[[routes.steps]]
+status = 200
+body = "Next response"
+
+[[routes]]
+id = "fast"
+method = "GET"
+path = "/fast"
+
+[[routes.steps]]
+status = 200
+body = "Ready"

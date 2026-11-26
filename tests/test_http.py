@@ -2,16 +2,18 @@ from collections.abc import Iterator, Mapping
 from contextlib import closing, contextmanager
 from http.client import HTTPConnection, HTTPMessage
 from pathlib import Path
-from socket import SHUT_WR, create_connection
+from socket import SHUT_WR, create_connection, socket
 from threading import Event, Thread
 
 import pytest
 
 from faultbox import server as http_server
-from faultbox.engine.models import AssignedResponse
 from faultbox.engine.runtime import ScenarioEngine
 from faultbox.scenario.loader import load_scenario
 from faultbox.server import HOST, create_server
+
+
+DELAY_SCENARIO = Path(__file__).resolve().parents[1] / "examples" / "delay.toml"
 
 
 @contextmanager
@@ -137,39 +139,64 @@ def test_payments_sequences_are_isolated_and_serve_body_file(readme_scenario_pat
                     assert headers["Content-Type"] == "application/json; charset=utf-8"
 
 
-def test_requests_can_finish_while_first_response_is_waiting_to_be_sent(
-    request_scenario_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_other_requests_finish_while_first_step_is_delayed(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sending_first = Event()
-    release_first = Event()
-    send_response = http_server._ScenarioHandler._send_scenario_response
+    waiting = Event()
+    release = Event()
+    intervals: list[float | None] = []
 
-    def pause_first_response(
-        handler: http_server._ScenarioHandler, response: AssignedResponse
-    ) -> None:
-        if response.route_id == "get-body" and response.assignment_number == 1:
-            sending_first.set()
-            assert release_first.wait(timeout=5)
+    class ControlledWait(Event):
+        def wait(self, timeout: float | None = None) -> bool:
+            intervals.append(timeout)
+            waiting.set()
+            assert release.wait(timeout=5)
+            return False
 
-        send_response(handler, response)
+    monkeypatch.setattr(http_server, "Event", ControlledWait)
+    monkeypatch.setattr(http_server, "TIMEOUT_MAX", 2)
 
-    monkeypatch.setattr(http_server._ScenarioHandler, "_send_scenario_response", pause_first_response)
-
-    with _running_server(request_scenario_path) as port:
+    with _running_server(DELAY_SCENARIO) as port:
         with closing(HTTPConnection(HOST, port, timeout=2)) as first:
-            first.request("GET", "/body")
+            first.request("GET", "/slow")
 
             try:
-                assert sending_first.wait(timeout=2)
-                status, _, body = _request(port, "GET", "/body")
-                assert (status, body) == (202, b"next")
-                status, _, body = _request(port, "POST", "/body")
-                assert (status, body) == (201, b"first")
+                assert waiting.wait(timeout=2)
+                status, _, body = _request(port, "GET", "/slow")
+                assert (status, body) == (200, b"Next response")
+                status, _, body = _request(port, "GET", "/fast")
+                assert (status, body) == (200, b"Ready")
             finally:
-                release_first.set()
+                release.set()
 
             with first.getresponse() as response:
-                assert (response.status, response.read()) == (201, b"first")
+                assert (response.status, response.read()) == (200, b"Delayed response")
+
+    assert intervals == [2.0, 1.0]
+
+
+def test_client_times_out_and_server_close_interrupts_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    wait_started = Event()
+
+    class ObservedWait(Event):
+        def wait(self, timeout: float | None = None) -> bool:
+            wait_started.set()
+            return super().wait(timeout)
+
+    monkeypatch.setattr(http_server, "Event", ObservedWait)
+
+    with socket() as client:
+        with _running_server(DELAY_SCENARIO) as port:
+            client.connect((HOST, port))
+            client.sendall(b"GET /slow HTTP/1.0\r\n\r\n")
+            assert wait_started.wait(timeout=2)
+
+            client.settimeout(0.1)
+            with pytest.raises(TimeoutError):
+                client.recv(1)
+
+        client.settimeout(2)
+        assert client.recv(1) == b""
 
 
 def test_exact_path_and_blank_query_with_utf8_response(tmp_path: Path) -> None:
