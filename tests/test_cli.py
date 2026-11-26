@@ -123,7 +123,7 @@ def test_run_rejects_out_of_range_port() -> None:
     ("step_fields", "message"),
     [
         ('body_file = "missing.json"\n', "body_file: cannot read 'missing.json'"),
-        ("delay_ms = 1\n", "delay_ms > 0 is not supported yet"),
+        ("delay_ms = -1\n", "delay_ms: expected an integer greater than or equal to 0"),
     ],
 )
 def test_run_validates_before_binding(
@@ -157,7 +157,7 @@ def test_run_serves_scenario_and_closes_on_interrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     scenario_path = tmp_path / "scenario.toml"
-    scenario_path.write_text(RUN_SCENARIO, encoding="utf-8")
+    scenario_path.write_text(RUN_SCENARIO + "delay_ms = 1\n", encoding="utf-8")
     listeners: list[socket.socket] = []
 
     def serve_until_interrupted(server: HTTPServer) -> None:
