@@ -1,10 +1,11 @@
-"""Assign scenario responses to sequential requests without performing I/O."""
+"""Assign scenario responses to requests without performing I/O."""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
 from itertools import repeat
+from threading import Lock
 
 from faultbox.engine.models import AssignedResponse, RequestContext
 from faultbox.scenario.models import ResponseStep, Route, Scenario
@@ -17,18 +18,22 @@ class _RouteState:
 
 
 class ScenarioEngine:
-    """Keep independent response sequences per route and test case."""
+    """Keep independent response sequences per route and test case.
+
+    The loaded scenario is treated as read-only while the engine is in use.
+    """
 
     def __init__(self, scenario: Scenario) -> None:
         self._routes_by_method_and_path: dict[tuple[str, str], list[Route]] = {}
         self._states: dict[tuple[str, str | None], _RouteState] = {}
+        self._state_lock = Lock()
 
         for route in scenario.routes:
             key = (route.method, route.path)
             self._routes_by_method_and_path.setdefault(key, []).append(route)
 
     def next_response(self, request: RequestContext) -> AssignedResponse | None:
-        """Assign the next step immediately, or return None if no route matches."""
+        """Assign the next step atomically, or return None if no route matches."""
         headers = {name.lower(): value for name, value in request.headers.items()}
         route = self._select_route(request, headers)
 
@@ -37,14 +42,16 @@ class ScenarioEngine:
 
         test_case_id = headers.get("x-test-case-id", "").strip(" \t") or None
         state_key = (route.id, test_case_id)
-        state = self._states.get(state_key)
 
-        if state is None:
-            state = _RouteState(self._generate_numbered_responses(route.steps))
-            self._states[state_key] = state
+        with self._state_lock:
+            state = self._states.get(state_key)
+            if state is None:
+                state = _RouteState(self._generate_numbered_responses(route.steps))
+                self._states[state_key] = state
 
-        step_number, step = next(state.responses)
-        state.assignment_count += 1
+            step_number, step = next(state.responses)
+            state.assignment_count += 1
+            assignment_number = state.assignment_count
 
         body = step.body
         assert body is not None, "ScenarioEngine requires loaded response bodies"
@@ -52,7 +59,7 @@ class ScenarioEngine:
         return AssignedResponse(
             route_id=route.id,
             step_number=step_number,
-            assignment_number=state.assignment_count,
+            assignment_number=assignment_number,
             status=step.status,
             headers=step.headers.copy(),
             body=body,

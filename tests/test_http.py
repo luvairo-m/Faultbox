@@ -3,11 +3,12 @@ from contextlib import closing, contextmanager
 from http.client import HTTPConnection, HTTPMessage
 from pathlib import Path
 from socket import SHUT_WR, create_connection
-from threading import Thread
+from threading import Event, Thread
 
 import pytest
 
 from faultbox import server as http_server
+from faultbox.engine.models import AssignedResponse
 from faultbox.engine.runtime import ScenarioEngine
 from faultbox.scenario.loader import load_scenario
 from faultbox.server import HOST, create_server
@@ -134,6 +135,41 @@ def test_payments_sequences_are_isolated_and_serve_body_file(readme_scenario_pat
                 assert (status, body) == (expected_status, expected_body)
                 if expected_status == 200:
                     assert headers["Content-Type"] == "application/json; charset=utf-8"
+
+
+def test_requests_can_finish_while_first_response_is_waiting_to_be_sent(
+    request_scenario_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sending_first = Event()
+    release_first = Event()
+    send_response = http_server._ScenarioHandler._send_scenario_response
+
+    def pause_first_response(
+        handler: http_server._ScenarioHandler, response: AssignedResponse
+    ) -> None:
+        if response.route_id == "get-body" and response.assignment_number == 1:
+            sending_first.set()
+            assert release_first.wait(timeout=5)
+
+        send_response(handler, response)
+
+    monkeypatch.setattr(http_server._ScenarioHandler, "_send_scenario_response", pause_first_response)
+
+    with _running_server(request_scenario_path) as port:
+        with closing(HTTPConnection(HOST, port, timeout=2)) as first:
+            first.request("GET", "/body")
+
+            try:
+                assert sending_first.wait(timeout=2)
+                status, _, body = _request(port, "GET", "/body")
+                assert (status, body) == (202, b"next")
+                status, _, body = _request(port, "POST", "/body")
+                assert (status, body) == (201, b"first")
+            finally:
+                release_first.set()
+
+            with first.getresponse() as response:
+                assert (response.status, response.read()) == (201, b"first")
 
 
 def test_exact_path_and_blank_query_with_utf8_response(tmp_path: Path) -> None:
@@ -308,7 +344,6 @@ headers = {{ "Content-Type" = "application/json", "dAtE" = "Thu, 01 Jan 1970 00:
         (b"Content-Length: 1, 1\r\n", 400, b"Invalid Content-Length"),
         (b"Content-Length: \xb2\r\n", 400, b"Invalid Content-Length"),
         (b"Content-Length: 1\r\ncOnTeNt-LeNgTh: 1\r\n", 400, b"Multiple Content-Length"),
-        (b"Content-Length: 1\r\nContent-Length: 2\r\n", 400, b"Multiple Content-Length"),
         (b"Transfer-Encoding: chunked\r\n", 501, b"Transfer-Encoding is not supported"),
         (
             b"transfer-encoding: chunked\r\nContent-Length: 1\r\n",

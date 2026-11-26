@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from time import monotonic
 from urllib.parse import parse_qs, urlsplit
 
@@ -189,7 +189,7 @@ class _ScenarioHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
 
-class _LocalHTTPServer(HTTPServer):
+class _LocalHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = sys.platform != "win32"
 
     def __init__(self, port: int, engine: ScenarioEngine) -> None:
@@ -197,6 +197,6 @@ class _LocalHTTPServer(HTTPServer):
         super().__init__((HOST, port), _ScenarioHandler)
 
 
-def create_server(port: int, engine: ScenarioEngine) -> HTTPServer:
+def create_server(port: int, engine: ScenarioEngine) -> ThreadingHTTPServer:
     """Open a loopback listener for the caller to manage."""
     return _LocalHTTPServer(port, engine)
