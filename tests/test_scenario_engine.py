@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
+from threading import Barrier
 from urllib.parse import parse_qs
 
 import pytest
@@ -34,6 +36,41 @@ def test_engine_assigns_steps_in_order(
         response = engine.next_response(request)
         assert response is not None
         assert (response.step_number, response.status) == (step_number, status)
+
+
+def test_concurrent_first_requests_share_one_sequence_per_route_and_test_case() -> None:
+    scenario = Scenario(
+        routes=[
+            Route(
+                route_id,
+                "GET",
+                f"/{route_id}",
+                [ResponseStep(503), ResponseStep(502), ResponseStep(200)],
+            )
+            for route_id in ("items", "users")
+        ]
+    )
+    engine = ScenarioEngine(scenario)
+    groups = [("items", "case-a"), ("items", "case-b"), ("users", "case-a")]
+    start = Barrier(2 * len(groups), timeout=5)
+
+    def assign(route_id: str, test_case: str) -> tuple[int, int, int]:
+        request = RequestContext("GET", f"/{route_id}", {"X-Test-Case-ID": test_case})
+        start.wait()
+        response = engine.next_response(request)
+
+        assert response is not None
+        assert response.route_id == route_id
+        return response.step_number, response.assignment_number, response.status
+
+    with ThreadPoolExecutor(max_workers=start.parties) as workers:
+        assignments = {
+            (route_id, test_case): [workers.submit(assign, route_id, test_case) for _ in range(2)]
+            for route_id, test_case in groups
+        }
+
+    for group, futures in assignments.items():
+        assert sorted(future.result() for future in futures) == [(1, 1, 503), (2, 2, 502)], group
 
 
 def test_routes_advance_independently() -> None:
