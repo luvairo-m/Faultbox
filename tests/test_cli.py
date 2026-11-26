@@ -50,23 +50,14 @@ def test_installed_faultbox_shows_help(arguments: tuple[str, ...]) -> None:
     assert result.stderr == ""
 
 
-def test_check_accepts_readme_example(tmp_path: Path) -> None:
-    readme_path = Path(__file__).resolve().parents[1] / "README.md"
-    readme = readme_path.read_text(encoding="utf-8")
-    scenario = readme.split("```toml\n", 1)[1].split("```", 1)[0]
-    body = readme.split("```json\n", 1)[1].split("```", 1)[0]
-    scenario_path = tmp_path / "scenario.toml"
-    scenario_path.write_text(scenario, encoding="utf-8")
-    responses = tmp_path / "responses"
-    responses.mkdir()
-    (responses / "payment.json").write_text(body, encoding="utf-8")
+def test_check_accepts_readme_example(tmp_path: Path, readme_scenario_path: Path) -> None:
     working_directory = tmp_path / "working-directory"
     working_directory.mkdir()
 
-    result = _run_faultbox("check", str(scenario_path), cwd=working_directory)
+    result = _run_faultbox("check", str(readme_scenario_path), cwd=working_directory)
 
     assert result.returncode == 0
-    assert result.stdout.strip() == f"Scenario is valid: {scenario_path}"
+    assert result.stdout.strip() == f"Scenario is valid: {readme_scenario_path}"
     assert result.stderr == ""
 
 
@@ -162,7 +153,7 @@ def test_run_reports_occupied_port(tmp_path: Path, occupied_port: int) -> None:
     )
 
 
-def test_run_serves_404_and_closes_on_interrupt(
+def test_run_serves_scenario_and_closes_on_interrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     scenario_path = tmp_path / "scenario.toml"
@@ -175,13 +166,16 @@ def test_run_serves_404_and_closes_on_interrupt(
         server.timeout = 2
 
         with ThreadPoolExecutor(max_workers=1) as executor:
-            for method, path in [("GET", "/payments"), ("POST", "/__faultbox/reset")]:
+            for method, path, expected_status in [
+                ("GET", "/payments", 200),
+                ("POST", "/__faultbox/reset", 404),
+            ]:
                 request = executor.submit(server.handle_request)
                 connection = HTTPConnection("127.0.0.1", server.server_port, timeout=2)
                 with closing(connection):
                     connection.request(method, path)
                     with connection.getresponse() as response:
-                        assert response.status == 404
+                        assert response.status == expected_status
                         response.read()
 
                 request.result(timeout=2)
